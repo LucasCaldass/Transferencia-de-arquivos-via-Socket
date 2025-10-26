@@ -5,7 +5,7 @@ from client import start_client, send_file, request_file
 #TO DO: Fazer o servidor rodar mesmo após a transferência acontecer FEITO
 #TO DO: Verificar se o arquivo já existe no diretório; Falta implementar a lógica no lado do servidor
 #TO DO: Implementar o uso de Threads
-#TO DO:
+#TO DO: Revisar a arquitetura e o funcionamento do software
 
 if __name__ == '__main__':
 
