@@ -1,6 +1,6 @@
 import socket
 import os
-#import threading
+import threading
 
 BUFFER_SIZE = 4096
 HOST = '0.0.0.0'
@@ -12,64 +12,77 @@ RECEIVE_DIR = 'Arquivos Recebidos'
 def file_exists_on_folder(archive_path):
     return os.path.exists(archive_path)
 
-def transfer_file(conn):
-    if not os.path.exists(RECEIVE_DIR):
-        os.makedirs(RECEIVE_DIR)
 
-    with conn:
+def handle_client(conn, addr):
+    try:
+        if not os.path.exists(RECEIVE_DIR):
+            os.makedirs(RECEIVE_DIR)
+
+        # handshake aqui
+        initial = conn.recv(METADATA_SIZE).decode('utf-8').strip()
+        if not initial:
+            print(f'[{addr}] Request vazia. Fechando.')
+            return
+
+        
+        req_filename = os.path.basename(initial)
+        target_path = os.path.join(RECEIVE_DIR, req_filename)
+
+        if file_exists_on_folder(target_path):
+            conn.sendall('EXISTS'.encode('utf-8'))
+            print(f'[{addr}] Client solicitou {req_filename} -> EXISTS')
+            return
+        else:
+            conn.sendall('OK'.encode('utf-8'))
+            print(f'[{addr}] Client solicitou {req_filename} -> OK, esperando pela metadata do arquivo')
+
+        
         metadata_raw = conn.recv(METADATA_SIZE).decode('utf-8').strip()
-
         if not metadata_raw:
-            print('Nenhum arquivo encontrado.')
+            print(f'[{addr}] Metadata não recebida depois do OK. Fechando.')
             return
 
         try:
             file_name, file_size = metadata_raw.split(':', 1)
             file_size = int(file_size)
         except ValueError:
-            print('Metadados inválidos')
+            print(f'[{addr}] Metadata invalida: {metadata_raw}')
             return
 
+        
+        file_name = os.path.basename(file_name)
+        file_path = os.path.join(RECEIVE_DIR, file_name)
 
-
-        file_path = os.path.join(RECEIVE_DIR, os.path.basename(file_name))
-
-        print(f'O arquivo {file_name} de tamanho {file_size} será recebido!')
+        print(f'[{addr}] Recebendo {file_name} ({file_size} bytes)')
 
         bytes_received = 0
-        try:
-            with open(file_path, 'wb') as file:
-                while bytes_received < file_size:
-                    remaining_bytes = file_size - bytes_received
-                    data = conn.recv(min(BUFFER_SIZE, remaining_bytes))
+        with open(file_path, 'wb') as f:
+            while bytes_received < file_size:
+                remaining = file_size - bytes_received
+                chunk = conn.recv(min(BUFFER_SIZE, remaining))
+                if not chunk:
+                    break
+                f.write(chunk)
+                bytes_received += len(chunk)
 
-                    if not data:
-                        print('Fim da transferência de dados. Encerrando conexão...')
-                        break
+        if bytes_received == file_size:
+            print(f'[{addr}] Arquivo recebido com sucesso: {file_name}')
+        else:
+            print(f'[{addr}] Arquivo incompleto: recebido {bytes_received} of {file_size} bytes')
 
-                    file.write(data)
-                    bytes_received += len(data)
-
-            if bytes_received == file_size:
-                print('Arquivo recebido com sucesso!')
-
-            else:
-                print(f'Arquivo incompleto! Somente foram recebidos {bytes_received} de {file_size} bytes.')
-
-        except IOError as e:
-            print(f'Erro de I/O ao tentar salvar o arquivo {file_name}: {e}')
-        except EOFError as e:
-            print(f'Um erro ocorreu {e}')
+    except Exception as e:
+        print(f'[{addr}] Erro no client: {e}')
+    finally:
+        conn.close()
 
 
 def start_server():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        print('Aguardando conexão ao servidor...')
         s.bind((HOST, PORT))
         s.listen(5)
-
+        print(f'Server listening em {HOST}:{PORT}')
         while True:
             conn, addr = s.accept()
-            print('Conectado ao servidor com sucesso!')
-
-            transfer_file(conn)
+            print(f'Conexao aceita de {addr}')
+            t = threading.Thread(target=handle_client, args=(conn, addr), daemon=True)
+            t.start()
